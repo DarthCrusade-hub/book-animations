@@ -21,13 +21,15 @@ FPS = 24
 FRAME_START = 1
 FRAME_END = 240
 EYE_TURN_FRAME = 144
-PREVIEW_FRAME = 1
+PREVIEW_FRAME = 120
 
 try:
     import bpy
     from mathutils import Vector
 except ImportError as exc:
     raise SystemExit("Run inside Blender.") from exc
+
+SZETH_PILLAR_POS = Vector((-15.0, -3.8, 0.0))
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +87,48 @@ def keyframe_linear(obj: bpy.types.Object, path: str) -> None:
 def look_at(obj: bpy.types.Object, target: Vector) -> None:
     direction = target - obj.location
     obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+
+
+def add_part(
+    root: bpy.types.Object,
+    name: str,
+    primitive: str,
+    location: Vector,
+    mat: bpy.types.Material,
+    scale: Vector | None = None,
+    rotation: tuple[float, float, float] | None = None,
+) -> bpy.types.Object:
+    world_loc = root.matrix_world.translation + location
+    if primitive == "sphere":
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=world_loc)
+    elif primitive == "cylinder":
+        bpy.ops.mesh.primitive_cylinder_add(radius=1.0, depth=1.0, location=world_loc)
+    elif primitive == "cube":
+        bpy.ops.mesh.primitive_cube_add(size=1.0, location=world_loc)
+    elif primitive == "torus":
+        bpy.ops.mesh.primitive_torus_add(major_radius=1.0, minor_radius=0.2, location=world_loc)
+    else:
+        raise ValueError(primitive)
+
+    obj = bpy.context.active_object
+    obj.name = name
+    if scale:
+        obj.scale = scale
+    if rotation:
+        obj.rotation_euler = rotation
+    assign_material(obj, mat)
+    set_smooth(obj)
+    obj.parent = root
+    obj.matrix_parent_inverse = root.matrix_world.inverted()
+    return obj
+
+
+def animate_flicker(obj: bpy.types.Object, seed: int) -> None:
+    base = obj.scale.copy()
+    for frame in range(1, FRAME_END + 1, 8):
+        flicker = 0.85 + ((seed * 17 + frame * 13) % 30) / 100.0
+        obj.scale = (base.x * flicker, base.y * flicker, base.z * (flicker + 0.08))
+        obj.keyframe_insert("scale", frame=frame)
 
 
 # ---------------------------------------------------------------------------
@@ -254,30 +298,61 @@ def build_materials() -> dict[str, bpy.types.Material]:
 def add_dragon_carving(pillar: bpy.types.Object, idx: int, mats: dict) -> list[bpy.types.Object]:
     parts = []
     x, y, _ = pillar.location
-    for ring_i, z in enumerate([4.5, 6.5, 8.5]):
+
+    for ring_i, z in enumerate([3.8, 5.8, 7.8, 9.6]):
         bpy.ops.mesh.primitive_torus_add(
-            major_radius=1.28 + ring_i * 0.02,
-            minor_radius=0.14,
+            major_radius=1.3 + ring_i * 0.015,
+            minor_radius=0.11,
             location=(x, y, z),
-            rotation=(math.pi / 2, 0, ring_i * 0.4),
+            rotation=(math.pi / 2, 0, ring_i * 0.55),
         )
         ring = bpy.context.active_object
-        ring.name = f"DragonRing_{idx:02d}_{ring_i}"
+        ring.name = f"DragonScaleRing_{idx:02d}_{ring_i}"
         assign_material(ring, mats["gold"])
         parts.append(ring)
 
-    # Serpentine body winding pillar
-    for seg in range(6):
-        angle = seg * 0.9
+    for seg in range(8):
+        angle = seg * 0.75
+        z = 3.5 + seg * 0.95
         bpy.ops.mesh.primitive_uv_sphere_add(
-            radius=0.22,
-            location=(x + math.cos(angle) * 1.15, y + math.sin(angle) * 1.15, 4 + seg * 1.1),
+            radius=0.2,
+            location=(x + math.cos(angle) * 1.18, y + math.sin(angle) * 1.18, z),
         )
-        scale_seg = bpy.context.active_object
-        scale_seg.name = f"DragonBody_{idx:02d}_{seg}"
-        scale_seg.scale = (1.6, 0.7, 0.7)
-        assign_material(scale_seg, mats["gold"])
-        parts.append(scale_seg)
+        body = bpy.context.active_object
+        body.name = f"DragonCoil_{idx:02d}_{seg}"
+        body.scale = (1.8, 0.65, 0.6)
+        assign_material(body, mats["gold"])
+        parts.append(body)
+
+    # Dragon head crest at top of pillar
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.35, location=(x + 1.1, y, 10.8))
+    head = bpy.context.active_object
+    head.name = f"DragonHead_{idx:02d}"
+    head.scale = (1.4, 0.8, 0.75)
+    assign_material(head, mats["gold"])
+    parts.append(head)
+
+    for horn_i, rz in enumerate((-0.5, 0.5)):
+        bpy.ops.mesh.primitive_cone_add(
+            radius1=0.08, radius2=0.02, depth=0.45,
+            location=(x + 1.25, y + (0.15 if horn_i else -0.15), 11.2),
+        )
+        horn = bpy.context.active_object
+        horn.name = f"DragonHorn_{idx:02d}_{horn_i}"
+        horn.rotation_euler = (math.radians(25), 0, rz)
+        assign_material(horn, mats["gold"])
+        parts.append(horn)
+
+    for claw_i in range(3):
+        bpy.ops.mesh.primitive_cone_add(
+            radius1=0.05, radius2=0.01, depth=0.3,
+            location=(x + 0.9 + claw_i * 0.12, y, 10.4),
+        )
+        claw = bpy.context.active_object
+        claw.name = f"DragonClaw_{idx:02d}_{claw_i}"
+        claw.rotation_euler = (math.radians(70), 0, 0)
+        assign_material(claw, mats["gold"])
+        parts.append(claw)
 
     return parts
 
@@ -370,6 +445,7 @@ def build_chandelier(
         flame.name = f"CandleFlame_{idx:02d}_{arm_i}"
         flame.scale = (0.5, 0.5, 1.2)
         assign_material(flame, mats["candle_flame"])
+        animate_flicker(flame, idx * 10 + arm_i)
         parts.append(flame)
 
     light_data = bpy.data.lights.new(name=f"ChandelierLight_{idx:02d}", type="POINT")
@@ -406,6 +482,15 @@ def build_tables_and_chandeliers(mats: dict[str, bpy.types.Material]) -> list[bp
         set_smooth(table)
         objects.append(table)
 
+        bpy.ops.mesh.primitive_torus_add(
+            major_radius=1.82, minor_radius=0.045,
+            location=(x, y, 0.91), rotation=(math.pi / 2, 0, 0),
+        )
+        trim = bpy.context.active_object
+        trim.name = f"TableGoldTrim_{idx:02d}"
+        assign_material(trim, mats["gold"])
+        objects.append(trim)
+
         bpy.ops.mesh.primitive_cylinder_add(radius=0.18, depth=0.08, location=(x + 0.5, y, 0.95))
         plate = bpy.context.active_object
         plate.name = f"FeastPlate_{idx:02d}"
@@ -430,6 +515,7 @@ def build_tables_and_chandeliers(mats: dict[str, bpy.types.Material]) -> list[bp
         tc_flame.name = f"TableFlame_{idx:02d}"
         tc_flame.scale = (0.6, 0.6, 1.4)
         assign_material(tc_flame, mats["candle_flame"])
+        animate_flicker(tc_flame, idx + 200)
         objects.append(tc_flame)
 
         if idx % 2 == 0:
@@ -450,64 +536,40 @@ def parent_parts(root: bpy.types.Object, parts: list[bpy.types.Object]) -> None:
 def build_musicians(mats: dict[str, bpy.types.Material]) -> list[bpy.types.Object]:
     musicians = []
     configs = [
-        (-4.5, "Lute"),
+        (-5.0, "Erhu"),
+        (-2.5, "Harp"),
         (0.0, "Drum"),
-        (4.5, "Flute"),
-        (-2.0, "Harp"),
-        (2.0, "Zither"),
+        (2.5, "Flute"),
+        (5.0, "Zither"),
     ]
     for i, (x, kind) in enumerate(configs):
         root = bpy.data.objects.new(f"Musician_{i}_{kind}", None)
-        root.location = (x, -17, 1.2)
+        root.location = (x, -17.2, 1.15)
+        root.rotation_euler = (0, math.radians(180), 0)
         bpy.context.collection.objects.link(root)
-        parts = []
 
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.2, location=(x, -17, 1.75))
-        head = bpy.context.active_object
-        assign_material(head, mats["skin_noble"])
-        parts.append(head)
+        head = add_part(root, f"MusicianHead_{i}", "sphere", Vector((0, 0, 0.62)), mats["skin_noble"], Vector((0.2, 0.2, 0.22)))
+        add_part(root, f"MusicianTorso_{i}", "cylinder", Vector((0, 0, 0.25)), mats["noble_red"], Vector((0.24, 0.24, 0.28)))
+        add_part(root, f"MusicianRobe_{i}", "cylinder", Vector((0, 0, -0.05)), mats["noble_gold"], Vector((0.32, 0.32, 0.18)))
+        add_part(root, f"MusicianCollar_{i}", "torus", Vector((0, 0, 0.42)), mats["gold"], Vector((0.22, 0.22, 0.06)), (math.pi / 2, 0, 0))
 
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.25, depth=0.55, location=(x, -17, 1.35))
-        torso = bpy.context.active_object
-        assign_material(torso, mats["noble_red"])
-        parts.append(torso)
-
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.35, depth=0.25, location=(x, -17, 0.95))
-        base = bpy.context.active_object
-        assign_material(base, mats["noble_gold"])
-        parts.append(base)
-
-        if kind == "Lute":
-            bpy.ops.mesh.primitive_uv_sphere_add(radius=0.28, location=(x + 0.35, -16.7, 1.3))
-            inst = bpy.context.active_object
-            inst.scale = (0.6, 0.3, 1.0)
-            assign_material(inst, mats["wood"])
-            parts.append(inst)
+        if kind == "Erhu":
+            add_part(root, f"Inst_{i}", "cylinder", Vector((0.15, 0.2, 0.35)), mats["wood"], Vector((0.03, 0.03, 0.5)))
+            add_part(root, f"InstBow_{i}", "cube", Vector((0.25, 0.15, 0.4)), mats["wood"], Vector((0.02, 0.35, 0.02)))
         elif kind == "Drum":
-            bpy.ops.mesh.primitive_cylinder_add(radius=0.22, depth=0.18, location=(x, -16.6, 1.0))
-            inst = bpy.context.active_object
-            assign_material(inst, mats["wood"])
-            parts.append(inst)
+            add_part(root, f"Inst_{i}", "cylinder", Vector((0, 0.25, 0.1)), mats["wood"], Vector((0.22, 0.22, 0.1)))
         elif kind == "Harp":
-            bpy.ops.mesh.primitive_cube_add(size=0.6, location=(x + 0.3, -16.7, 1.4))
-            inst = bpy.context.active_object
-            inst.scale = (0.15, 0.4, 1.0)
-            assign_material(inst, mats["gold"])
-            parts.append(inst)
+            add_part(root, f"Inst_{i}", "cube", Vector((0.2, 0.15, 0.35)), mats["gold"], Vector((0.08, 0.35, 0.55)))
+        elif kind == "Flute":
+            add_part(root, f"Inst_{i}", "cylinder", Vector((0.1, 0.22, 0.45)), mats["gold"], Vector((0.025, 0.025, 0.35)))
         else:
-            bpy.ops.mesh.primitive_cube_add(size=0.5, location=(x + 0.25, -16.7, 1.25))
-            inst = bpy.context.active_object
-            inst.scale = (0.2, 0.5, 0.1)
-            assign_material(inst, mats["wood"])
-            parts.append(inst)
+            add_part(root, f"Inst_{i}", "cube", Vector((0.15, 0.2, 0.3)), mats["wood"], Vector((0.25, 0.08, 0.04)))
 
-        parent_parts(root, parts)
-
-        for frame, rz, tz in ((1, 0, 0), (40, 8, 0.03), (80, -6, 0), (120, 10, 0.04), (160, -4, 0), (200, 6, 0.02), (240, 0, 0)):
-            root.rotation_euler = (0, 0, math.radians(rz))
-            root.location = (x, -17, 1.2 + tz)
+        for frame, rz, arm in ((1, 0, 0), (30, 5, 15), (60, -4, -10), (90, 8, 20), (120, -3, -8), (150, 6, 12), (180, -5, -15), (210, 4, 8), (240, 0, 0)):
+            root.rotation_euler = (0, math.radians(180), math.radians(rz))
             root.keyframe_insert("rotation_euler", frame=frame)
-            root.keyframe_insert("location", frame=frame)
+            head.rotation_euler = (math.radians(arm * 0.3), 0, math.radians(arm))
+            head.keyframe_insert("rotation_euler", frame=frame)
 
         musicians.append(root)
     return musicians
@@ -520,63 +582,57 @@ def build_noble(name: str, x: float, y: float, mats: dict, seed: int) -> bpy.typ
     root.rotation_euler = (0, 0, math.radians(angle))
     bpy.context.collection.objects.link(root)
 
-    parts = []
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.2, location=(x, y, 1.52))
-    head = bpy.context.active_object
-    head.name = f"{name}_Head"
-    assign_material(head, mats["skin_noble"])
-    set_smooth(head)
-    parts.append(head)
+    is_red = seed % 2 == 0
+    robe = mats["noble_red"] if is_red else mats["noble_gold"]
+    trim = mats["noble_gold"] if is_red else mats["noble_red"]
 
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.26, depth=0.75, location=(x, y, 1.05))
-    torso = bpy.context.active_object
-    torso.name = f"{name}_Torso"
-    assign_material(torso, mats["noble_red"] if seed % 2 else mats["noble_gold"])
-    parts.append(torso)
+    head = add_part(root, f"{name}_Head", "sphere", Vector((0, 0, 1.52)), mats["skin_noble"], Vector((0.2, 0.2, 0.22)))
+    add_part(root, f"{name}_Torso", "cylinder", Vector((0, 0, 1.05)), robe, Vector((0.26, 0.26, 0.38)))
+    add_part(root, f"{name}_Skirt", "cylinder", Vector((0, 0, 0.52)), trim, Vector((0.32, 0.32, 0.22)))
+    add_part(root, f"{name}_Collar", "torus", Vector((0, 0, 1.28)), mats["gold"], Vector((0.24, 0.24, 0.05)), (math.pi / 2, 0, 0))
+    add_part(root, f"{name}_Sash", "torus", Vector((0, 0, 0.78)), mats["gold"], Vector((0.28, 0.28, 0.04)), (math.pi / 2, 0, 0))
 
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.3, depth=0.45, location=(x, y, 0.5))
-    lower = bpy.context.active_object
-    lower.name = f"{name}_Lower"
-    assign_material(lower, mats["noble_gold"] if seed % 2 else mats["noble_red"])
-    parts.append(lower)
+    cup = add_part(root, f"{name}_Cup", "cylinder", Vector((0.22, 0.12, 1.0)), mats["gold"], Vector((0.05, 0.05, 0.08)))
 
+    arms: list[bpy.types.Object] = []
     for side, ox in (("L", -0.28), ("R", 0.28)):
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.07, depth=0.55, location=(x + ox, y, 1.0))
-        arm = bpy.context.active_object
-        arm.name = f"{name}_Arm_{side}"
-        arm.rotation_euler = (math.radians(75 if side == "R" else 70), 0, math.radians(20 if side == "R" else -20))
-        assign_material(arm, mats["noble_red"])
-        parts.append(arm)
-
-        for frame, rot_x in ((1, 75), (45, 55), (90, 80), (135, 50), (180, 85), (210, 60), (240, 75)):
-            arm.rotation_euler = (
-                math.radians(rot_x if side == "R" else rot_x - 5),
-                0,
-                math.radians(20 if side == "R" else -20),
-            )
-            arm.keyframe_insert("rotation_euler", frame=frame)
-
-    parent_parts(root, parts)
+        arm = add_part(root, f"{name}_Arm_{side}", "cylinder", Vector((ox, 0, 1.0)), robe, Vector((0.07, 0.07, 0.28)))
+        arm.rotation_euler = (math.radians(70), 0, math.radians(18 if side == "R" else -18))
+        arms.append(arm)
 
     base_loc = root.location.copy()
-    base_rot = angle
+    eating = seed % 3 == 0
+    talking = seed % 3 == 1
+
     for frame, dz, head_turn, body_turn in (
         (1, 0.0, 0, 0),
-        (30, 0.04, 12, 5),
-        (60, 0.0, -8, -4),
-        (90, 0.05, 15, 7),
-        (120, 0.0, -6, -3),
-        (150, 0.04, 10, 6),
-        (180, 0.0, -10, -5),
-        (210, 0.05, 8, 4),
+        (30, 0.04, 14, 5),
+        (60, 0.0, -10, -4),
+        (90, 0.05, 18, 7),
+        (120, 0.0, -8, -3),
+        (150, 0.04, 12, 6),
+        (180, 0.0, -12, -5),
+        (210, 0.05, 9, 4),
         (240, 0.0, 0, 0),
     ):
         root.location = (base_loc.x, base_loc.y, base_loc.z + dz)
-        root.rotation_euler = (0, 0, math.radians(base_rot + body_turn))
+        root.rotation_euler = (0, 0, math.radians(angle + body_turn))
         root.keyframe_insert("location", frame=frame)
         root.keyframe_insert("rotation_euler", frame=frame)
         head.rotation_euler = (0, 0, math.radians(head_turn))
         head.keyframe_insert("rotation_euler", frame=frame)
+
+        for ai, arm in enumerate(arms):
+            if eating and ai == 0:
+                eat_angle = 55 if frame in (45, 90, 135, 180) else 75
+                arm.rotation_euler = (math.radians(eat_angle), math.radians(25), math.radians(18))
+            elif talking and ai == 1:
+                talk_angle = 40 if frame in (30, 90, 150, 210) else 65
+                arm.rotation_euler = (math.radians(talk_angle), 0, math.radians(-18))
+            else:
+                wave = 70 + (10 if frame % 60 < 30 else -8)
+                arm.rotation_euler = (math.radians(wave), 0, math.radians(18 if ai else -18))
+            arm.keyframe_insert("rotation_euler", frame=frame)
 
     return root
 
@@ -589,7 +645,7 @@ def build_crowd(mats: dict[str, bpy.types.Material]) -> bpy.types.Object:
         for x in range(-12, 13, 2):
             if abs(x) < 3 and abs(y) < 3:
                 continue
-            if x < -13 and -8 < y < 2:
+            if x < -12 and -9 < y < 3:
                 continue
             seed += 1
             noble = build_noble(
@@ -604,109 +660,92 @@ def build_crowd(mats: dict[str, bpy.types.Material]) -> bpy.types.Object:
 
 
 def build_szeth(mats: dict[str, bpy.types.Material]) -> bpy.types.Object:
-    """Lean athletic pale young man in white, standing still at left pillar."""
-    sx, sy = -16.3, -3.8
+    """Detailed pale young man leaning against the left dragon pillar."""
     root = bpy.data.objects.new("SZETH", None)
-    root.location = (sx, sy, 0)
-    root.rotation_euler = (0, 0, math.radians(88))
+    root.location = (SZETH_PILLAR_POS.x - 0.85, SZETH_PILLAR_POS.y, 0)
+    root.rotation_euler = (0, 0, math.radians(95))
     bpy.context.collection.objects.link(root)
 
-    def loc(off: Vector) -> Vector:
-        return root.location + off
+    # Athletic legs
+    for side, ox in (("L", -0.09), ("R", 0.09)):
+        add_part(root, f"Szeth_Thigh_{side}", "cylinder", Vector((ox, 0.02, 0.55)), mats["white_fabric"], Vector((0.09, 0.09, 0.28)))
+        add_part(root, f"Szeth_Calf_{side}", "cylinder", Vector((ox, 0.04, 0.18)), mats["white_fabric"], Vector((0.075, 0.075, 0.3)))
+        add_part(root, f"Szeth_Foot_{side}", "cube", Vector((ox, 0.08, 0.02)), mats["white_fabric"], Vector((0.08, 0.18, 0.05)))
 
-    parts = []
+    # Lean athletic torso + white tunic layers
+    add_part(root, "Szeth_Pelvis", "cube", Vector((0, 0.02, 0.72)), mats["white_fabric"], Vector((0.22, 0.16, 0.14)))
+    torso = add_part(root, "Szeth_Torso", "cylinder", Vector((0, 0.04, 1.02)), mats["white_fabric"], Vector((0.17, 0.14, 0.34)))
+    add_part(root, "Szeth_Chest", "cube", Vector((0, 0.06, 1.2)), mats["white_fabric"], Vector((0.2, 0.12, 0.18)))
+    add_part(root, "Szeth_Shoulder_L", "sphere", Vector((-0.17, 0.04, 1.28)), mats["white_fabric"], Vector((0.08, 0.08, 0.08)))
+    add_part(root, "Szeth_Shoulder_R", "sphere", Vector((0.17, 0.04, 1.28)), mats["white_fabric"], Vector((0.08, 0.08, 0.08)))
 
-    for side, ox in (("L", -0.1), ("R", 0.1)):
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.085, depth=0.92, location=loc(Vector((ox, 0.05, 0.46))))
-        leg = bpy.context.active_object
-        leg.name = f"Szeth_Leg_{side}"
-        assign_material(leg, mats["white_fabric"])
-        parts.append(leg)
+    # Wrapped waist cloth (layered)
+    add_part(root, "Szeth_WaistWrap_A", "torus", Vector((0, 0.03, 0.82)), mats["white_fabric"], Vector((0.22, 0.22, 0.07)), (math.pi / 2, 0, 0))
+    add_part(root, "Szeth_WaistWrap_B", "torus", Vector((0, 0.05, 0.78)), mats["white_fabric"], Vector((0.24, 0.24, 0.05)), (math.pi / 2, 0, 0.3))
+    add_part(root, "Szeth_SashTail", "cube", Vector((0.08, 0.06, 0.7)), mats["white_fabric"], Vector((0.06, 0.22, 0.04)))
 
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.19, depth=0.62, location=loc(Vector((0, 0.08, 1.02))))
-    torso = bpy.context.active_object
-    torso.name = "Szeth_Torso"
-    torso.scale = (0.85, 0.75, 1.0)
-    assign_material(torso, mats["white_fabric"])
-    parts.append(torso)
+    # Arms at rest — motionless
+    for side, ox in (("L", -0.2), ("R", 0.2)):
+        upper = add_part(root, f"Szeth_UpperArm_{side}", "cylinder", Vector((ox, 0.02, 1.05)), mats["white_fabric"], Vector((0.055, 0.055, 0.22)))
+        upper.rotation_euler = (math.radians(6), 0, math.radians(4 if side == "R" else -4))
+        fore = add_part(root, f"Szeth_Forearm_{side}", "cylinder", Vector((ox, 0.04, 0.78)), mats["white_fabric"], Vector((0.045, 0.045, 0.2)))
+        fore.rotation_euler = (math.radians(4), 0, 0)
+        add_part(root, f"Szeth_Hand_{side}", "cube", Vector((ox, 0.05, 0.64)), mats["skin_pale"], Vector((0.05, 0.08, 0.03)))
 
-    bpy.ops.mesh.primitive_cube_add(size=0.42, location=loc(Vector((0, 0.1, 1.22))))
-    chest = bpy.context.active_object
-    chest.name = "Szeth_Chest"
-    chest.scale = (0.7, 0.45, 0.55)
-    assign_material(chest, mats["white_fabric"])
-    parts.append(chest)
+    # Neck + expressionless face
+    neck = add_part(root, "Szeth_Neck", "cylinder", Vector((0, 0.06, 1.4)), mats["skin_pale"], Vector((0.05, 0.05, 0.1)))
+    head = add_part(root, "Szeth_Head", "sphere", Vector((0, 0.08, 1.56)), mats["skin_pale"], Vector((0.16, 0.18, 0.2)))
+    add_part(root, "Szeth_Jaw", "cube", Vector((0, 0.1, 1.48)), mats["skin_pale"], Vector((0.12, 0.1, 0.08)))
+    add_part(root, "Szeth_Brow", "cube", Vector((0, 0.14, 1.62)), mats["skin_pale"], Vector((0.14, 0.04, 0.03)))
+    add_part(root, "Szeth_Nose", "cube", Vector((0, 0.16, 1.55)), mats["skin_pale"], Vector((0.025, 0.04, 0.03)))
 
-    bpy.ops.mesh.primitive_torus_add(
-        major_radius=0.21,
-        minor_radius=0.065,
-        location=loc(Vector((0, 0.04, 0.84))),
-        rotation=(math.pi / 2, 0, 0),
-    )
-    waist = bpy.context.active_object
-    waist.name = "Szeth_WaistWrap"
-    assign_material(waist, mats["white_fabric"])
-    parts.append(waist)
+    # Short dark hair
+    add_part(root, "Szeth_HairTop", "sphere", Vector((0, 0.04, 1.66)), mats["hair_dark"], Vector((0.17, 0.17, 0.1)))
+    add_part(root, "Szeth_HairSide_L", "cube", Vector((-0.1, 0.06, 1.58)), mats["hair_dark"], Vector((0.04, 0.06, 0.08)))
+    add_part(root, "Szeth_HairSide_R", "cube", Vector((0.1, 0.06, 1.58)), mats["hair_dark"], Vector((0.04, 0.06, 0.08)))
 
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.055, depth=0.14, location=loc(Vector((0, 0.1, 1.38))))
-    neck = bpy.context.active_object
-    neck.name = "Szeth_Neck"
-    assign_material(neck, mats["skin_pale"])
-    parts.append(neck)
-
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.17, location=loc(Vector((0, 0.12, 1.52))))
-    head = bpy.context.active_object
-    head.name = "Szeth_Head"
-    head.scale = (0.88, 0.92, 1.02)
-    assign_material(head, mats["skin_pale"])
-    set_smooth(head)
-    parts.append(head)
-
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.175, location=loc(Vector((0, 0.08, 1.6))))
-    hair = bpy.context.active_object
-    hair.name = "Szeth_Hair"
-    hair.scale = (1.0, 1.0, 0.45)
-    assign_material(hair, mats["hair_dark"])
-    parts.append(hair)
-
-    for side, ox in (("L", -0.18), ("R", 0.18)):
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.055, depth=0.62, location=loc(Vector((ox, 0.02, 1.0))))
-        arm = bpy.context.active_object
-        arm.name = f"Szeth_Arm_{side}"
-        arm.rotation_euler = (math.radians(8), 0, math.radians(6 if side == "R" else -6))
-        assign_material(arm, mats["white_fabric"])
-        parts.append(arm)
-
-    parent_parts(root, parts)
-
+    # Eye rig — slow turn toward camera at 6 seconds
     eyes_pivot = bpy.data.objects.new("Szeth_EyesPivot", None)
     eyes_pivot.parent = head
     eyes_pivot.location = (0, 0, 0)
     bpy.context.collection.objects.link(eyes_pivot)
 
-    for side, ox in (("L", -0.055), ("R", 0.055)):
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.028, location=loc(Vector((ox, 0.2, 1.53))))
+    bpy.context.view_layer.update()
+    for side, ox in (("L", -0.045), ("R", 0.045)):
+        bpy.ops.mesh.primitive_uv_sphere_add(
+            radius=0.028, location=head.matrix_world @ Vector((ox, 0.1, 0.02))
+        )
         eye = bpy.context.active_object
         eye.name = f"Szeth_Eye_{side}"
+        eye.scale = (1.0, 1.0, 0.75)
         assign_material(eye, mats["eye_white"])
         eye.parent = eyes_pivot
+        eye.location = Vector((ox, 0.1, 0.02))
 
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.014, location=loc(Vector((ox, 0.23, 1.53))))
+        bpy.ops.mesh.primitive_uv_sphere_add(
+            radius=0.012, location=head.matrix_world @ Vector((ox, 0.13, 0.02))
+        )
         pupil = bpy.context.active_object
         pupil.name = f"Szeth_Pupil_{side}"
         assign_material(pupil, mats["eye_dark"])
         pupil.parent = eye
+        pupil.location = Vector((0, 0.03, 0))
 
+    # Lock Szeth completely motionless
     for frame in (1, FRAME_END):
         root.keyframe_insert("location", frame=frame)
         root.keyframe_insert("rotation_euler", frame=frame)
 
     eyes_pivot.rotation_euler = (0, 0, 0)
     eyes_pivot.keyframe_insert("rotation_euler", frame=1)
-    eyes_pivot.keyframe_insert("rotation_euler", frame=EYE_TURN_FRAME - 12)
-    eyes_pivot.rotation_euler = (0, math.radians(-42), 0)
+    eyes_pivot.keyframe_insert("rotation_euler", frame=EYE_TURN_FRAME - 24)
+    eyes_pivot.rotation_euler = (0, math.radians(-48), 0)
     eyes_pivot.keyframe_insert("rotation_euler", frame=EYE_TURN_FRAME)
     eyes_pivot.keyframe_insert("rotation_euler", frame=FRAME_END)
+    if eyes_pivot.animation_data and eyes_pivot.animation_data.action:
+        for fc in eyes_pivot.animation_data.action.fcurves:
+            for kp in fc.keyframe_points:
+                kp.interpolation = "BEZIER"
 
     link_to_collection(root, "Characters")
     return root
@@ -734,8 +773,8 @@ def setup_world_volumetrics() -> None:
     bg.inputs["Color"].default_value = (0.015, 0.01, 0.008, 1.0)
     bg.inputs["Strength"].default_value = 0.08
     vol.inputs["Color"].default_value = (0.85, 0.55, 0.25, 1.0)
-    vol.inputs["Density"].default_value = 0.018
-    vol.inputs["Anisotropy"].default_value = 0.35
+    vol.inputs["Density"].default_value = 0.028
+    vol.inputs["Anisotropy"].default_value = 0.45
 
     links.new(bg.outputs["Background"], mix.inputs[0])
     links.new(vol.outputs["Volume"], mix.inputs[1])
@@ -754,7 +793,7 @@ def setup_lighting(szeth: bpy.types.Object) -> None:
 
     sun = bpy.data.lights.new("GodRaySun", type="SPOT")
     sun.color = (1.0, 0.78, 0.45)
-    sun.energy = 1800
+    sun.energy = 2400
     sun.spot_size = math.radians(55)
     sun.spot_blend = 0.65
     sun_obj = bpy.data.objects.new("GodRaySun", sun)
@@ -764,7 +803,7 @@ def setup_lighting(szeth: bpy.types.Object) -> None:
 
     cool = bpy.data.lights.new("SzethCoolShadow", type="AREA")
     cool.color = (0.5, 0.62, 0.82)
-    cool.energy = 95
+    cool.energy = 140
     cool.size = 4.0
     cool_obj = bpy.data.objects.new("SzethCoolShadow", cool)
     cool_obj.location = (-18.5, -3.5, 4.5)
@@ -793,11 +832,13 @@ def setup_camera(szeth: bpy.types.Object) -> bpy.types.Object:
     face = focus + Vector((0.05, 0.2, 0.02))
 
     keyframes = [
-        (1, Vector((1, 24, 13)), Vector((0, 0, 4))),
-        (60, Vector((-2, 14, 7)), Vector((-6, -2, 2))),
-        (120, Vector((-12.5, -5.5, 2.6)), focus),
-        (180, Vector((-14.8, -4.9, 1.78)), face),
-        (FRAME_END, Vector((-15.0, -4.7, 1.72)), face),
+        (1, Vector((2, 26, 14)), Vector((0, -2, 3))),
+        (40, Vector((0, 20, 10)), Vector((-4, 0, 2.5))),
+        (80, Vector((-4, 12, 6)), Vector((-8, -2, 2))),
+        (120, Vector((-12.0, -5.2, 2.55)), focus),
+        (160, Vector((-14.2, -4.95, 1.95)), focus + Vector((0, 0.1, 0.1))),
+        (200, Vector((-15.1, -4.75, 1.76)), face),
+        (FRAME_END, Vector((-15.25, -4.55, 1.7)), face),
     ]
 
     for frame, loc, target in keyframes:
@@ -826,7 +867,7 @@ def setup_eevee_render() -> None:
     scene.render.resolution_y = 1080
     scene.render.image_settings.file_format = "PNG"
     scene.view_settings.view_transform = "AgX"
-    scene.view_settings.exposure = 0.55
+    scene.view_settings.exposure = 0.62
 
     eevee = scene.eevee
     if hasattr(eevee, "use_bloom"):
