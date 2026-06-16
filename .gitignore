@@ -2,8 +2,12 @@
 *.blend1
 *.blend2
 
+# Portable tooling (local Blender install)
+tools/
+
 # Renders (keep folder, ignore output files)
 renders/**/*.png
+!renders/*_preview.png
 renders/**/*.jpg
 renders/**/*.jpeg
 renders/**/*.exr
