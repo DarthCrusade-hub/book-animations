@@ -1,0 +1,32 @@
+# Blender
+*.blend1
+*.blend2
+
+# Renders (keep folder, ignore output files)
+renders/**/*.png
+renders/**/*.jpg
+renders/**/*.jpeg
+renders/**/*.exr
+renders/**/*.mp4
+renders/**/*.mov
+renders/**/*.avi
+renders/**/*.mkv
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
